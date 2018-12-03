@@ -1,0 +1,160 @@
+#include <stdio.h>
+
+int main(){
+
+  unsigned char a = EOF;
+  unsigned int b = 0;
+  b+=a;
+  printf("Hello World%c\n",a);
+  printf("hello world%d\n",b);
+  return 0;
+}
+书中有几句话完全不该翻译，原文透出的那种确信和通透是应该保留下来，讲到文件操作这一章时，忍不住要做些笔记：
+原文保留着，笔记写在旁边。
+##1.open操作,需要几个信息：文件名，操作方式，许可。
+%eax 存系统调用的信号 ，为5.
+%ebx 存文件第一个字符的地址。
+%ecx  操作方式，read（0）/write（03101）。
+%edx  许可 （0666）,不太了解，不过只是规则，需要时再查。
+#####用法
+程序：喂cpu！我给你发了一个中断（int $0x80），我要打开一个文件。
+cpu：好的，中断收到，但我需要一些信息，你得一起给我，哦，你给了，我看看。
+         %eax中是5，所以你是要打开文件
+         %ebx中是一个4字节数据，我会把它当作文件的首地址
+         %ecx中是零，所以我直到你是要读这个文件
+         %edx中是0666，权限代码正确
+         我为你打开了这个文件，独有的识别码我放在了%eax中，请注意查收。
+```
+        movl $5,%eax
+        movl 8(%ebp),%ebx
+        movl $0,%ecx
+        movl $0666,%edx
+        int $0x80
+```
+程序：好的，收到，我会把它保存在%ebp位置的下方一个字节
+```
+        movl %eax,-4(%ebp)
+```
+程序：对了我刚才打开的是要读取的文件，我还要打开一个需要写入的文件，再接受一次中断吧！
+```
+        movl $5,%eax
+        movl 12(%ebp),%ebx
+        movl $03101,%ecx
+        movl $0666,%edx
+        int $0x80
+```
+cpu：%eax 5 打开    %ebx文件地址   %ecx 03101 写    %edx 0666 权限正确  搞定了！去%eax取这个文件识别码就好。
+##2.linux返回一串文件代号，存入%eax，这段信息将代表上面的文件。
+
+##3.下一步到了文件的具体操作。
+   ##### read：
+系统调用信号：3
+%ebx ：文件代号
+%ecx ： 缓冲区地址
+%edx：缓冲区大小
+  ##### write：
+系统调用信号：4
+%ebx ：文件代号
+%ecx ： 缓冲区地址
+%edx：缓冲区大小
+##4.用完的文件记得关掉
+系统调用信号：6
+%ebx：文件代号
+
+程序如下：
+```
+.section .data
+.section .bss
+.lcomm BUFFER_DATA,500
+
+.section .text
+
+.globl _start
+
+_start:
+
+        movl %esp, %ebp
+        subl $8,%esp
+open_files:
+open_fd_in:
+
+        movl $5,%eax
+        movl 8(%ebp),%ebx
+        movl $0,%ecx
+        movl $0666,%edx
+        int $0x80
+
+store_fd_in:
+        movl %eax,-4(%ebp)
+open_fd_out:
+        movl $5,%eax
+        movl 12(%ebp),%ebx
+        movl $03101,%ecx
+        movl $0666,%edx
+        int $0x80
+
+store_fd_out:
+        movl %eax,-8(%ebp)
+
+read_loop_begin:
+        movl $3,%eax
+        movl -4(%ebp),%ebx
+        movl $BUFFER_DATA,%ecx
+        movl $500,%edx
+        int $0x80
+
+        cmpl $0 , %eax
+        jle end_loop
+continue_read_loop:
+        pushl $BUFFER_DATA
+        pushl %eax
+
+        movl %eax,%edx
+        movl $4,%eax
+        movl -8(%ebp),%ebx
+        movl $BUFFER_DATA,%ecx
+        int $0x80
+
+        jmp read_loop_begin
+end_loop:
+        movl $6,%eax
+        movl -8(%ebp),%ebx
+        int $0x80
+
+        movl $6,%eax
+        movl -4(%ebp),%ebx
+        int $0x80
+
+        movl $1,%eax
+        movl $0,%ebx
+        int $0x80
+
+```
+1. Tell Linux the name of the file to open, and in what mode you want it opened
+(read, write, both read and write, create it if it doesn’t exist, etc.). This is
+handled with the open system call, which takes a filename, a number
+representing the mode, and a permission set as its parameters. %eax will hold
+the system call number, which is 5. The address of the first character of the
+filename should be stored in %ebx. The read/write intentions, represented as a
+number, should be stored in %ecx. For now, use 0 for files you want to read
+from, and 03101 for files you want to write to (you must include the leading
+zero)Finally, the permission set should be stored as a number in %edx. If
+you are unfamiliar with UNIX permissions, just use 0666 for the permissions
+(again, you must include the leading zero).
+2. Linux will then return to you a file descriptor in %eax. Remember, this is a
+number that you use to refer to this file throughout your program.
+3. Next you will operate on the file doing reads and/or writes, each time giving
+Linux the file descriptor you want to use. read is system call 3, and to call it
+you need to have the file descriptor in %ebx, the address of a buffer for storing
+the data that is read in %ecx, and the size of the buffer in %edx. Buffers will be
+explained in the Section called Buffers and .bss. read will return with either
+the number of characters read from the file, or an error code. Error codes can
+be distinguished because they are always negative numbers (more information
+on negative numbers can be found in Chapter 10). write is system call 4, and
+it requires the same parameters as the read system call, except that the buffer
+should already be filled with the data to write out. The write system call will
+give back the number of bytes written in %eax or an error code.
+4. When you are through with your files, you can then tell Linux to close them.
+Afterwards, your file descriptor is no longer valid. This is done using close,
+system call 6. The only parameter to close is the file descriptor, which is
+placed in %ebx

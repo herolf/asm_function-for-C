@@ -1,0 +1,19 @@
+
+.globl open
+.type open,@function
+open:
+        pushl %ebp
+        movl %esp,%ebp
+	movl $5,%eax
+	movl 8(%ebp),%ebx
+	movl 12(%ebp),%ecx
+	movl $0666,%edx
+	int $0x80
+
+store_fd_in:
+	movl %eax,-4(%ebp)
+        movl %ebp,%esp
+        pop %ebp
+        ret
+        
+
